@@ -1,0 +1,85 @@
+# =========================
+# Legal Document Processor — Sample Clauses (Safe)
+# =========================
+
+# Install dependencies
+import sys
+!{sys.executable} -m pip install -q transformers sentence-transformers torch
+
+# Imports
+from transformers import pipeline
+from sentence_transformers import SentenceTransformer, util
+import torch, os, pandas as pd, numpy as np
+
+# Create folders
+os.makedirs('data/processed', exist_ok=True)
+
+print("Torch version:", torch.__version__)
+print("CUDA available:", torch.cuda.is_available())
+
+# =========================
+# Step 1: Sample legal clauses
+# =========================
+texts = [
+    "All customer data must be stored within the European Union.",
+    "Employees must comply with the company's cybersecurity policy.",
+    "Third-party vendors must sign a data protection agreement.",
+    "All financial transactions must be logged and auditable.",
+    "Access to sensitive data must be restricted to authorized personnel."
+]
+
+print("Extracted", len(texts), "clauses")
+print("Sample clause:\n", texts[0])
+
+# =========================
+# Step 2: Generate embeddings
+# =========================
+embedder = SentenceTransformer("all-MiniLM-L6-v2")
+corpus_embeddings = embedder.encode(texts, convert_to_tensor=True, show_progress_bar=True)
+
+# Save embeddings & clauses
+pd.DataFrame({"clause": texts}).to_csv("data/processed/clauses_sample.csv", index=False)
+np.save("data/processed/corpus_embeddings.npy", corpus_embeddings.cpu().numpy())
+print("Embeddings saved!")
+
+# =========================
+# Step 3: Semantic search
+# =========================
+query = "data residency EU storage location"
+query_embedding = embedder.encode(query, convert_to_tensor=True)
+hits = util.semantic_search(query_embedding, corpus_embeddings, top_k=3)
+
+print("Top matching clauses:\n")
+for h in hits[0]:
+    print("Score:", h["score"])
+    print("Clause:\n", texts[h["corpus_id"]])
+    print("\n---\n")
+
+# =========================
+# Step 4: Summarization & Simplification
+# =========================
+device = 0 if torch.cuda.is_available() else -1
+
+summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6", device=device)
+simplifier = pipeline("text2text-generation", model="google/flan-t5-small", device=device)
+
+sample_text = texts[hits[0][0]['corpus_id']]
+
+summary = summarizer(sample_text, max_length=120, min_length=30, do_sample=False)[0]['summary_text']
+prompt = "Simplify the following legal clause into 3-4 clear action items for a system analyst:\n\n" + sample_text
+items = simplifier(prompt, max_length=200)[0]['generated_text']
+
+print("Summary:\n", summary)
+print("\nAction Items:\n", items)
+
+# =========================
+# Step 5: Save outputs
+# =========================
+with open("data/processed/sample_clause.txt", "w", encoding="utf-8") as f:
+    f.write(sample_text)
+with open("data/processed/sample_summary.txt", "w", encoding="utf-8") as f:
+    f.write(summary)
+with open("data/processed/sample_items.txt", "w", encoding="utf-8") as f:
+    f.write(items)
+
+print("Saved outputs in data/processed/")
